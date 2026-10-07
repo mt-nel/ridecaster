@@ -1,6 +1,6 @@
 # RideCast
 
-RideCast is a static weather and power planner for the Coast to Coast Challenge (Zoutkamp to Zoutelande, 504 km, 10-11 Oct 2026).
+RideCast is a static weather and power planner for 504 km, 10-11 Oct 2026 cycle trip.
 Drag a slider along the route and see, for a chosen average speed or power, where you are, what time it is,
 and what wind, rain and temperature you meet there.
 
