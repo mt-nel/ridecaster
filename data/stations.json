@@ -1,0 +1,35 @@
+{
+  "start": "Zoutkamp",
+  "stations": [
+    {
+      "name": "Oldemarkt",
+      "km": 109,
+      "opens": 15,
+      "closes": 17
+    },
+    {
+      "name": "Garderen",
+      "km": 211,
+      "opens": 19,
+      "closes": 23
+    },
+    {
+      "name": "Hardinxveld-Giessendam",
+      "km": 321,
+      "opens": 23,
+      "closes": 27
+    },
+    {
+      "name": "Dinteloord",
+      "km": 402,
+      "opens": 26,
+      "closes": 31
+    },
+    {
+      "name": "Zoutelande",
+      "km": null,
+      "opens": 32,
+      "closes": 36
+    }
+  ]
+}

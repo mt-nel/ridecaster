@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>RideCast – weather on the route</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div
+        class="language-control"
+        id="language-control"
+        role="group"
+        data-i18n-aria="languageLabel"
+        aria-label="Language"
+      >
+        <button
+          class="language-button is-active"
+          type="button"
+          data-language="en"
+          aria-label="English"
+          title="English"
+          aria-pressed="true"
+        >
+          <svg class="language-flag" viewBox="0 0 60 40" aria-hidden="true" focusable="false">
+            <rect width="60" height="40" fill="#21468b" />
+            <path d="M0 0 60 40M60 0 0 40" stroke="#fff" stroke-width="10" />
+            <path d="M0 0 60 40M60 0 0 40" stroke="#c8102e" stroke-width="4" />
+            <path d="M30 0v40M0 20h60" stroke="#fff" stroke-width="16" />
+            <path d="M30 0v40M0 20h60" stroke="#c8102e" stroke-width="8" />
+          </svg>
+        </button>
+        <button
+          class="language-button"
+          type="button"
+          data-language="nl"
+          aria-label="Nederlands"
+          title="Nederlands"
+          aria-pressed="false"
+        >
+          <svg class="language-flag" viewBox="0 0 60 40" aria-hidden="true" focusable="false">
+            <rect width="60" height="13.34" fill="#ae1c28" />
+            <rect y="13.33" width="60" height="13.34" fill="#fff" />
+            <rect y="26.66" width="60" height="13.34" fill="#21468b" />
+          </svg>
+        </button>
+      </div>
+      <h1 data-i18n="title">RideCast: weather on your ride</h1>
+      <p data-i18n-html="intro"></p>
+    </header>
+    <main>
+      <div class="stack">
+        <div class="box">
+          <div class="seg" id="map-mode">
+            <span data-i18n="colourRouteBy">Colour route by</span
+            ><button data-mode="wind" class="is-active" data-i18n="wind">Wind</button
+            ><button data-mode="rain" data-i18n="rain">Rain</button>
+          </div>
+          <svg
+            id="map"
+            viewBox="0 0 600 640"
+            role="img"
+            data-i18n-aria="mapAria"
+            aria-label="Route map coloured by headwind"
+          ></svg>
+          <label class="position-label" for="position" data-i18n-prefix="positionOnRoute"
+            >Position on route: <b id="position-label"></b
+          ></label>
+          <input id="position" type="range" min="0" value="0" step="0.5" />
+          <div class="legend" id="legend"></div>
+        </div>
+        <div class="box">
+          <h2 data-i18n="headwindTitle">Headwind along the route</h2>
+          <svg
+            class="chart"
+            id="wind-chart"
+            viewBox="0 0 600 120"
+            role="img"
+            data-i18n-aria="headwindAria"
+            aria-label="Headwind profile"
+          ></svg>
+        </div>
+        <div class="box">
+          <h2 data-i18n="rainTitle">Rain along the route</h2>
+          <svg
+            class="chart"
+            id="rain-chart"
+            viewBox="0 0 600 80"
+            role="img"
+            data-i18n-aria="rainAria"
+            aria-label="Rain profile"
+          ></svg>
+        </div>
+        <div class="box">
+          <h2 data-i18n="powerTitle">Power needed along the route</h2>
+          <svg
+            class="chart"
+            id="power-chart"
+            viewBox="0 0 600 100"
+            role="img"
+            data-i18n-aria="powerAria"
+            aria-label="Power profile"
+          ></svg>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="box">
+          <h2 data-i18n="yourRide">Your ride</h2>
+          <div class="seg" id="pace-mode">
+            <span data-i18n="paceBy">Pace by</span
+            ><button data-pace="speed" class="is-active" data-i18n="speed">Speed</button
+            ><button data-pace="power" data-i18n="power">Power</button>
+          </div>
+          <div class="row">
+            <div>
+              <label for="speed" data-i18n="averageSpeed">Average speed (km/h)</label
+              ><input id="speed" type="number" min="8" max="60" step="0.01" value="22.91" />
+            </div>
+            <div>
+              <label for="power" data-i18n="averagePower">Average power (W)</label
+              ><input id="power" type="number" min="20" max="600" step="1" value="150" />
+            </div>
+          </div>
+          <div class="chips" id="speed-presets"></div>
+          <div class="row">
+            <div>
+              <label for="start-date" data-i18n="startDate">Start date</label
+              ><input id="start-date" type="date" value="2026-10-10" />
+            </div>
+            <div>
+              <label for="start-time" data-i18n="startTime">Start time</label
+              ><input id="start-time" type="time" value="12:00" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="stops-km" data-i18n="stopsAtKm">Stops at km (comma-separated)</label
+              ><input id="stops-km" type="text" value="109, 211, 321, 402" />
+            </div>
+            <div>
+              <label for="stop-minutes" data-i18n="minutesPerStop">Minutes per stop</label
+              ><input id="stop-minutes" type="number" min="0" step="5" value="30" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="rider-kg" data-i18n="riderWeight">Rider weight (kg)</label
+              ><input id="rider-kg" type="number" min="40" max="130" value="75" />
+            </div>
+            <div>
+              <label for="kit-kg" data-i18n="bikeKitWeight">Bike + kit (kg)</label
+              ><input id="kit-kg" type="number" min="5" max="30" value="11" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="cda" data-i18n="ridingPosition">Riding position</label
+              ><select id="cda">
+                <option value="0.29" data-i18n="aeroDrops">Aero / drops</option>
+                <option value="0.33" selected data-i18n="onHoods">On the hoods</option>
+                <option value="0.38" data-i18n="upright">Upright</option>
+              </select>
+            </div>
+            <div>
+              <label for="crr" data-i18n="roadSurface">Road surface</label
+              ><select id="crr">
+                <option value="0.004" data-i18n="smoothAsphalt">Smooth asphalt</option>
+                <option value="0.0045" selected data-i18n="mixed">Mixed</option>
+                <option value="0.006" data-i18n="rough">Rough</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="wind-share" data-i18n="windShare">Wind at rider (% of forecast)</label
+              ><input id="wind-share" type="number" min="0" max="150" step="5" value="70" />
+            </div>
+            <div></div>
+          </div>
+          <p class="hint" id="weather-status" aria-live="polite"></p>
+          <div id="summary" class="summary"></div>
+        </div>
+        <div class="box">
+          <h2 data-i18n="atThisPoint">At this point</h2>
+          <div id="readout"></div>
+        </div>
+        <div class="box">
+          <h2 data-i18n="refreshmentStations">Refreshment stations</h2>
+          <div id="stations" class="scroll-x"></div>
+        </div>
+        <div class="box">
+          <details>
+            <summary data-i18n="forecastDataTitle">Forecast data (paste more from Windfinder)</summary>
+            <p class="hint" data-i18n="forecastHelp"></p>
+            <textarea id="forecast-text" spellcheck="false"></textarea>
+            <p>
+              <button class="btn btn--primary" id="apply-forecast" data-i18n="applyData">Apply data</button>
+              <span id="coverage" class="hint"></span>
+            </p>
+            <p class="hint">
+              <span data-i18n="openSpot">Open a spot:</span>
+              <a id="windfinder-link" href="https://www.windfinder.com" target="_blank" rel="noopener">Windfinder</a>
+            </p>
+          </details>
+        </div>
+      </div>
+    </main>
+
+    <!-- Data blocks: the build replaces their contents (see scripts/build.mjs). -->
+    <script type="application/json" id="route-data">
+      []
+    </script>
+    <script type="application/json" id="stations-data">
+      {}
+    </script>
+    <script type="text/csv" id="forecast-data"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
