@@ -1,8 +1,8 @@
 {
-  "name": "ride-cast",
+  "name": "coast-to-coast-weather",
   "version": "1.0.0",
   "private": true,
-  "description": "RideCast: weather and power for the Coast to Coast Challenge route",
+  "description": "Weather and power along the Coast to Coast Challenge route",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",

@@ -5,7 +5,7 @@
  *   styles.css, app.js
  *   standalone.html  the same page with CSS and JS inlined (one file to email or host anywhere)
  *
- * Inputs: data/route.gpx (resampled to ~1 km), data/stations.json, data/forecast.csv, src/*.
+ * Inputs: data/route.gpx (resampled to ~1 km), data/stations.json, data/boundaries.json, data/translations.json, data/forecast.csv, src/*.
  */
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -76,6 +76,8 @@ const route = buildRoute(read('data/route.gpx'));
 let page = read('src/index.html');
 page = fillDataBlock(page, 'route-data', JSON.stringify(route));
 page = fillDataBlock(page, 'stations-data', JSON.stringify(JSON.parse(read('data/stations.json'))));
+page = fillDataBlock(page, 'boundaries-data', JSON.stringify(JSON.parse(read('data/boundaries.json'))));
+page = fillDataBlock(page, 'translations-data', JSON.stringify(JSON.parse(read('data/translations.json'))));
 page = fillDataBlock(page, 'forecast-data', read('data/forecast.csv'));
 
 const css = read('src/styles.css');

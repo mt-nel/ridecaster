@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * RideCast: weather and power along the route.
+ * Coast to Coast: weather and power along the route.
  *
  * Layout of this file:
  *   1. constants
@@ -27,6 +27,33 @@
   const SAMPLE_STEP_KM = 2;
   const TARGET_HOURS = 24;
   const SPEED_PRESETS_KMH = [22, 25, 27, 30, 33, 36];
+  const DEFAULT_START_DATE = '2026-10-10';
+  const DEFAULT_LANGUAGE = 'en';
+  const LANGUAGE_STORAGE_KEY = 'coast-to-coast-language';
+  const LOCALES = Object.freeze({ nl: 'nl-NL', en: 'en-GB' });
+  const RELOAD_DELAY_MS = 400;
+  const RAIN_RATE_FACTOR = 3; // hourly mm -> mm per 3 hours, the unit of the forecast rows
+
+  /** KNMI HARMONIE AROME (about 2.5 days, then ECMWF) through Open-Meteo's forecast API. */
+  const OPEN_METEO = Object.freeze({
+    url: 'https://api.open-meteo.com/v1/forecast',
+    hourly: [
+      'wind_speed_10m',
+      'wind_direction_10m',
+      'wind_gusts_10m',
+      'temperature_2m',
+      'precipitation',
+      'cloud_cover',
+    ],
+    timezone: 'Europe/Amsterdam',
+    pointCount: 7,
+    spanDays: 2,
+  });
+  /** Sources served by Open-Meteo: source id -> model. GFS is the model behind Windfinder's forecast. */
+  const LIVE_SOURCES = Object.freeze({
+    knmi: { model: 'knmi_seamless', name: 'KNMI' },
+    gfs: { model: 'gfs_global', name: 'GFS' },
+  });
 
   const PHYSICS = Object.freeze({
     airDensity: 1.24,
@@ -49,231 +76,24 @@
     rainHeavy: [90, 50, 190],
   });
 
-  const MAP = Object.freeze({ width: 600, height: 640, margin: 40, referenceLat: 52.4, tickKm: 50 });
-  const CHART = Object.freeze({ width: 600, padLeft: 36 });
-  const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+  /**
+   * Temperature palette: [position 0..1 along the scale, rgb]. The scale itself is fitted to the temperatures
+   * on the route (see fitTemperatureScale), so small differences stay visible.
+   */
+  const TEMPERATURE_PALETTE = Object.freeze([
+    [0, [44, 90, 200]],
+    [0.25, [50, 165, 200]],
+    [0.5, [225, 190, 40]],
+    [0.75, [240, 125, 45]],
+    [1, [200, 45, 40]],
+  ]);
+  const TEMPERATURE_MIN_SPAN = 6;
+  const DEFAULT_TEMPERATURE_SCALE = Object.freeze({ low: 0, high: 26 });
+  const TEMPERATURE_AXIS_STEP = 5;
 
-  const STRINGS = {
-    en: {
-      languageLabel: 'Language',
-      title: 'RideCast: weather on your ride',
-      pageTitle: 'RideCast – weather on the route',
-      preset24: '24 h finish',
-      intro:
-        'Set your speed or power, then drag the slider to see your position and the wind and weather you will meet. Live forecast from <a href="https://api.met.no/weatherapi/locationforecast/2.0/documentation" target="_blank" rel="noopener">MET Norway</a> under <a href="https://api.met.no/doc/License" target="_blank" rel="noopener">CC BY 4.0</a>; values are converted to app units and interpolated between three route points.',
-      colourRouteBy: 'Colour route by',
-      wind: 'Wind',
-      rain: 'Rain',
-      mapAria: 'Route map coloured by headwind',
-      positionOnRoute: 'Position on route:',
-      headwindTitle: 'Headwind along the route',
-      headwindAria: 'Headwind profile',
-      rainTitle: 'Rain along the route',
-      rainAria: 'Rain profile',
-      powerTitle: 'Power needed along the route',
-      powerAria: 'Power profile',
-      yourRide: 'Your ride',
-      paceBy: 'Pace by',
-      speed: 'Speed',
-      power: 'Power',
-      averageSpeed: 'Average speed (km/h)',
-      averagePower: 'Average power (W)',
-      startDate: 'Start date',
-      startTime: 'Start time',
-      stopsAtKm: 'Stops at km (comma-separated)',
-      minutesPerStop: 'Minutes per stop',
-      riderWeight: 'Rider weight (kg)',
-      bikeKitWeight: 'Bike + kit (kg)',
-      ridingPosition: 'Riding position',
-      aeroDrops: 'Aero / drops',
-      onHoods: 'On the hoods',
-      upright: 'Upright',
-      roadSurface: 'Road surface',
-      smoothAsphalt: 'Smooth asphalt',
-      mixed: 'Mixed',
-      rough: 'Rough',
-      windShare: 'Wind at rider (% of forecast)',
-      atThisPoint: 'At this point',
-      refreshmentStations: 'Refreshment stations',
-      forecastDataTitle: 'Forecast data (paste more from Windfinder)',
-      forecastHelp:
-        'One row per forecast step: station km, date, hour, wind direction, wind and gust in knots, temperature, rain and cloud. Live data is requested at km 0, 171 and 504. Coverage depends on the selected date; MET Norway typically publishes about nine days ahead. If live data is unavailable, the bundled CSV remains below. Windfinder shows where the wind comes from.',
-      applyData: 'Apply data',
-      openSpot: 'Open a spot:',
-      stop: 'stop',
-      headwind: 'headwind',
-      tailwind: 'tailwind',
-      crosswindNoData: 'crosswind / no data',
-      dryNoData: 'dry / no data',
-      light: 'light',
-      moderate: 'moderate',
-      heavy: 'heavy',
-      noValidRows: 'No valid rows',
-      bundledForecast: 'Using bundled forecast while live data loads.',
-      liveUnavailable: 'Live forecast unavailable; using bundled forecast data.',
-      loadingLive: 'Loading live forecast from MET Norway...',
-      liveFetched: 'Live forecast from MET Norway, fetched {date} UTC.',
-      livePartial: 'Live forecast loaded for {loaded} of {total} route points; bundled data fills the rest.',
-      coverage: 'km {km}: {from} to {to}',
-      start: 'start',
-      finish: 'finish',
-      riding: 'riding',
-      stops: 'stops',
-      elapsed: 'elapsed',
-      averageSpeedShort: 'Average speed',
-      averagePowerShort: 'average power',
-      averageHeadwind: 'Average headwind component:',
-      negativeTailwind: '(negative = tailwind)',
-      rainOnAbout: 'Rain on about',
-      routeHeaviest: '% of the route, heaviest {rain} mm/h near km {km}',
-      dryWholeRoute: 'Dry along the whole route at these times',
-      missingForecast:
-        'No forecast loaded for {share}% of the route at these times. Change the date or paste forecast data below.',
-      earlyBy: 'early by {minutes} min',
-      lateBy: 'late by {minutes} min',
-      inWindow: 'in window',
-      station: 'Station',
-      times: 'Times',
-      youArrive: 'You arrive',
-      status: 'Status',
-      stationNote:
-        'Times are the two clock times the organiser lists per station, read here as a window. Stop positions follow the stage lengths: 109, 102, 110, 81 and 99 km.',
-      noForecastAt: 'No forecast for {date}',
-      noForecastHelp:
-        'Yr forecasts cover about 9 days ahead. Pick a date inside the loaded data, or paste race-day values under “Forecast data”.',
-      mostlyCrosswind: 'Mostly crosswind',
-      windFrom: 'wind from',
-      overcast: 'Overcast',
-      cloudy: 'Mostly cloudy',
-      partlyCloudy: 'Partly cloudy',
-      clear: 'Clear',
-      dry: 'Dry',
-      lightRain: 'Light rain',
-      moderateRain: 'Moderate rain',
-      heavyRain: 'Heavy rain',
-      gusts: 'Gusts',
-      crosswind: 'Crosswind',
-      temperature: 'Temperature',
-      cloud: 'Cloud',
-      headwindChart: 'headwind, km/h',
-      tailwindChart: 'tailwind, km/h',
-      rainChart: 'rain, mm per 3 h (6 or more = top of scale)',
-      powerChart: 'power, W · peak {peak} W (0 = coasting)',
-      hoursShort: 'h',
-      minutesShort: 'm',
-      windfinderMap: 'Windfinder map at km {km}',
-    },
-    nl: {
-      languageLabel: 'Taal',
-      title: 'RideCast: het weer tijdens je rit',
-      pageTitle: 'RideCast – het weer op de route',
-      preset24: 'Finish in 24 u',
-      intro:
-        'Stel je snelheid of vermogen in en versleep de schuifregelaar om je positie en het weer en de wind onderweg te bekijken. Liveverwachting van <a href="https://api.met.no/weatherapi/locationforecast/2.0/documentation" target="_blank" rel="noopener">MET Norway</a> onder <a href="https://api.met.no/doc/License" target="_blank" rel="noopener">CC BY 4.0</a>; waarden zijn omgerekend naar app-eenheden en geïnterpoleerd tussen drie routepunten.',
-      colourRouteBy: 'Kleur route op',
-      wind: 'Wind',
-      rain: 'Regen',
-      mapAria: 'Routekaart gekleurd op tegenwind',
-      positionOnRoute: 'Positie op route:',
-      headwindTitle: 'Tegenwind langs de route',
-      headwindAria: 'Profiel van tegenwind',
-      rainTitle: 'Regen langs de route',
-      rainAria: 'Regenprofiel',
-      powerTitle: 'Benodigd vermogen langs de route',
-      powerAria: 'Vermogensprofiel',
-      yourRide: 'Jouw rit',
-      paceBy: 'Rit op basis van',
-      speed: 'Snelheid',
-      power: 'Vermogen',
-      averageSpeed: 'Gemiddelde snelheid (km/u)',
-      averagePower: 'Gemiddeld vermogen (W)',
-      startDate: 'Startdatum',
-      startTime: 'Starttijd',
-      stopsAtKm: 'Stops op km (gescheiden door komma’s)',
-      minutesPerStop: 'Minuten per stop',
-      riderWeight: 'Gewicht fietser (kg)',
-      bikeKitWeight: 'Fiets + uitrusting (kg)',
-      ridingPosition: 'Fietshouding',
-      aeroDrops: 'Aero / onderin de beugels',
-      onHoods: 'Op de grepen',
-      upright: 'Rechtop',
-      roadSurface: 'Wegdek',
-      smoothAsphalt: 'Glad asfalt',
-      mixed: 'Gemengd',
-      rough: 'Ruw',
-      windShare: 'Wind bij fietser (% van verwachting)',
-      atThisPoint: 'Op dit punt',
-      refreshmentStations: 'Verzorgingsposten',
-      forecastDataTitle: 'Verwachtingsgegevens (plak meer uit Windfinder)',
-      forecastHelp:
-        'Eén regel per verwachtingsmoment: post-km, datum, uur, windrichting, wind en windstoten in knopen, temperatuur, regen en bewolking. Livegegevens worden bij km 0, 171 en 504 opgevraagd. De dekking hangt af van de gekozen datum; MET Norway publiceert meestal ongeveer negen dagen vooruit. Als livegegevens ontbreken, blijft de meegeleverde CSV hieronder beschikbaar. Windfinder toont waar de wind vandaan komt.',
-      applyData: 'Gegevens toepassen',
-      openSpot: 'Open een locatie:',
-      stop: 'stop',
-      headwind: 'tegenwind',
-      tailwind: 'meewind',
-      crosswindNoData: 'zijwind / geen gegevens',
-      dryNoData: 'droog / geen gegevens',
-      light: 'licht',
-      moderate: 'matig',
-      heavy: 'zwaar',
-      noValidRows: 'Geen geldige regels',
-      bundledForecast: 'Meegeleverde verwachting wordt gebruikt terwijl livegegevens laden.',
-      liveUnavailable: 'Liveverwachting niet beschikbaar; meegeleverde gegevens worden gebruikt.',
-      loadingLive: 'Liveverwachting van MET Norway laden...',
-      liveFetched: 'Liveverwachting van MET Norway, opgehaald op {date} UTC.',
-      livePartial:
-        'Liveverwachting geladen voor {loaded} van {total} routepunten; de rest komt uit de meegeleverde gegevens.',
-      coverage: 'km {km}: {from} tot {to}',
-      start: 'start',
-      finish: 'finish',
-      riding: 'fietsen',
-      stops: 'stops',
-      elapsed: 'verstreken',
-      averageSpeedShort: 'Gemiddelde snelheid',
-      averagePowerShort: 'gemiddeld vermogen',
-      averageHeadwind: 'Gemiddelde tegenwindcomponent:',
-      negativeTailwind: '(negatief = meewind)',
-      rainOnAbout: 'Regen op ongeveer',
-      routeHeaviest: '% van de route, meeste regen {rain} mm/u bij km {km}',
-      dryWholeRoute: 'Op deze tijden blijft het de hele route droog',
-      missingForecast:
-        'Geen verwachting voor {share}% van de route op deze tijden. Wijzig de datum of plak hieronder gegevens.',
-      earlyBy: '{minutes} min te vroeg',
-      lateBy: '{minutes} min te laat',
-      inWindow: 'binnen tijdvenster',
-      station: 'Post',
-      times: 'Tijden',
-      youArrive: 'Aankomst',
-      status: 'Status',
-      stationNote:
-        'Per post staan hier de twee door de organisatie vermelde tijden, opgevat als tijdvenster. De stoplocaties volgen de etappelengtes: 109, 102, 110, 81 en 99 km.',
-      noForecastAt: 'Geen verwachting voor {date}',
-      noForecastHelp:
-        'Yr-verwachtingen gaan ongeveer 9 dagen vooruit. Kies een datum binnen de geladen gegevens of plak wedstrijddagwaarden onder “Verwachtingsgegevens”.',
-      mostlyCrosswind: 'Overwegend zijwind',
-      windFrom: 'wind uit',
-      overcast: 'Zwaar bewolkt',
-      cloudy: 'Overwegend bewolkt',
-      partlyCloudy: 'Licht bewolkt',
-      clear: 'Helder',
-      dry: 'Droog',
-      lightRain: 'Lichte regen',
-      moderateRain: 'Matige regen',
-      heavyRain: 'Zware regen',
-      gusts: 'Windstoten',
-      crosswind: 'Zijwind',
-      temperature: 'Temperatuur',
-      cloud: 'Bewolking',
-      headwindChart: 'tegenwind, km/u',
-      tailwindChart: 'meewind, km/u',
-      rainChart: 'regen, mm per 3 u (6 of meer = maximum)',
-      powerChart: 'vermogen, W · piek {peak} W (0 = uitrollen)',
-      hoursShort: 'u',
-      minutesShort: 'm',
-      windfinderMap: 'Windfinder-kaart op km {km}',
-    },
-  };
+  const MAP = Object.freeze({ width: 600, height: 640, margin: 40, referenceLat: 52.4, tickKm: 50, labelInset: 14 });
+  const LABEL_HALF_CHAR_PX = 3.8; // about half the width of one character of a province name
+  const CHART = Object.freeze({ width: 600, padLeft: 36 });
 
   // ------------------------------------------------------------------ small helpers
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -366,49 +186,103 @@
     return byKm;
   }
 
-  /** Converts MET Norway Locationforecast data into the app's weather samples. */
-  function parseYrForecast(payload) {
-    const timeseries = payload?.properties?.timeseries;
-    if (!Array.isArray(timeseries)) return [];
-    const intervals = [
-      ['next_1_hours', 1],
-      ['next_6_hours', 6],
-      ['next_12_hours', 12],
-    ];
-    return timeseries
-      .flatMap(({ time, data }) => {
-        const instant = data?.instant?.details;
-        if (!instant) return [];
-        const windMs = instant.wind_speed;
-        const direction = instant.wind_from_direction;
-        const temperature = instant.air_temperature;
-        const timestamp = Date.parse(time);
-        if (![windMs, direction, temperature, timestamp].every(Number.isFinite)) return [];
+  /** Positions of the forecast points: evenly spaced from start to finish. */
+  function forecastPointKms(totalKm, count = OPEN_METEO.pointCount) {
+    return Array.from({ length: count }, (_, i) => Number(((i * totalKm) / (count - 1)).toFixed(1)));
+  }
 
-        let precipitation = 0;
-        let intervalHours = 1;
-        for (const [key, hours] of intervals) {
-          const amount = data[key]?.details?.precipitation_amount;
-          if (Number.isFinite(amount)) {
-            precipitation = amount;
-            intervalHours = hours;
-            break;
-          }
-        }
-        const gustMs = instant.wind_speed_of_gust;
-        return [
-          {
-            time: timestamp,
-            dir: direction,
-            windKts: windMs / KNOTS_TO_MS,
-            gustKts: Number.isFinite(gustMs) ? gustMs / KNOTS_TO_MS : windMs / KNOTS_TO_MS,
-            tempC: temperature,
-            rainMm3h: (precipitation * 3) / intervalHours,
-            cloudPct: Number.isFinite(instant.cloud_area_fraction) ? instant.cloud_area_fraction : 0,
-          },
-        ];
-      })
-      .sort((a, b) => a.time - b.time);
+  function addDays(isoDate, days) {
+    const [year, month, day] = isoDate.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+  }
+
+  /** Builds the Open-Meteo request: one multi-location call, local times, wind in knots. */
+  function buildOpenMeteoUrl(locations, startDate, model = LIVE_SOURCES.knmi.model) {
+    const params = new URLSearchParams({
+      latitude: locations.map((p) => p.lat.toFixed(4)).join(','),
+      longitude: locations.map((p) => p.lon.toFixed(4)).join(','),
+      hourly: OPEN_METEO.hourly.join(','),
+      models: model,
+      wind_speed_unit: 'kn',
+      timezone: OPEN_METEO.timezone,
+      start_date: startDate,
+      end_date: addDays(startDate, OPEN_METEO.spanDays),
+    });
+    return `${OPEN_METEO.url}?${params}`;
+  }
+
+  /** Series for one variable; tolerates a model suffix such as wind_speed_10m_knmi_seamless. */
+  function hourlySeries(hourly, name) {
+    const key = name in hourly ? name : Object.keys(hourly).find((k) => k.startsWith(`${name}_`));
+    return key ? hourly[key] : [];
+  }
+
+  /**
+   * Converts an Open-Meteo response (one object, or an array for several locations) to forecast samples.
+   * Hours without wind values are skipped. Times are local clock times, kept as UTC like the rest of the app.
+   * @param {object|object[]} response
+   * @param {number[]} kms route position of each requested location, in request order
+   * @returns {Map<number, WeatherSample[]>}
+   */
+  function parseOpenMeteo(response, kms) {
+    const results = Array.isArray(response) ? response : [response];
+    const byKm = new Map();
+    results.forEach((result, i) => {
+      const hourly = result.hourly ?? {};
+      const col = Object.fromEntries(OPEN_METEO.hourly.map((name) => [name, hourlySeries(hourly, name)]));
+      const samples = [];
+      (hourly.time ?? []).forEach((stamp, h) => {
+        const [year, month, day] = stamp.slice(0, 10).split('-').map(Number);
+        const wind = col.wind_speed_10m[h];
+        const dir = col.wind_direction_10m[h];
+        if (wind == null || dir == null) return;
+        samples.push({
+          time: Date.UTC(year, month - 1, day, Number(stamp.slice(11, 13))),
+          dir,
+          windKts: wind,
+          gustKts: col.wind_gusts_10m[h] ?? wind,
+          tempC: col.temperature_2m[h] ?? 0,
+          rainMm3h: (col.precipitation[h] ?? 0) * RAIN_RATE_FACTOR,
+          cloudPct: col.cloud_cover[h] ?? 0,
+        });
+      });
+      if (samples.length > 0) byKm.set(kms[i], samples);
+    });
+    return byKm;
+  }
+
+  /**
+   * Fetches a forecast from Open-Meteo (see LIVE_SOURCES) for points along the route.
+   * @returns {Promise<Map<number, WeatherSample[]>>}
+   * @throws {Error} with a readable message when the request fails or returns no usable data
+   */
+  async function fetchOpenMeteoForecast(route, startDate, source = 'knmi', fetchFn = globalThis.fetch) {
+    const kms = forecastPointKms(route.totalKm);
+    const response = await fetchFn(
+      buildOpenMeteoUrl(
+        kms.map((km) => route.pointAt(km)),
+        startDate,
+        LIVE_SOURCES[source].model,
+      ),
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.error) throw new Error(body.reason ?? `Open-Meteo answered ${response.status}`);
+    const byKm = parseOpenMeteo(body, kms);
+    if (byKm.size === 0) throw new Error('Open-Meteo returned no data for these dates');
+    return byKm;
+  }
+
+  /** Inverse of parseForecast: forecast rows as editable text. */
+  function toForecastCsv(byKm) {
+    const rows = [];
+    for (const [km, samples] of [...byKm.entries()].sort((x, y) => x[0] - y[0])) {
+      for (const s of samples) {
+        const iso = new Date(s.time).toISOString();
+        const values = [s.dir, s.windKts, s.gustKts, s.tempC, s.rainMm3h].map((v) => Number(v.toFixed(2)));
+        rows.push([km, iso.slice(0, 10), Number(iso.slice(11, 13)), ...values, Math.round(s.cloudPct)].join(','));
+      }
+    }
+    return ['km,date,hour,dir,kts,gust,temp,rain,cloud', ...rows].join('\n');
   }
 
   /** Linear blend of two samples; wind direction is blended as a vector so 350 and 10 give 0. */
@@ -606,24 +480,69 @@
   }
 
   // ------------------------------------------------------------------ formatting and colours
-  function formatDuration(hours) {
+  /** Picks the stored language if supported, else the first supported browser language, else English. */
+  function detectLanguage(stored, browserLanguages, supported) {
+    if (supported.includes(stored)) return stored;
+    const codes = browserLanguages.map((tag) => String(tag).toLowerCase().split('-')[0]);
+    return codes.find((code) => supported.includes(code)) ?? DEFAULT_LANGUAGE;
+  }
+
+  /**
+   * Returns t(key, params): looks the key up in the language, then in English, then returns the key itself.
+   * {name} placeholders are replaced from params.
+   * @param {Record<string, Record<string, string>>} dictionaries
+   * @param {string} language
+   */
+  function createTranslator(dictionaries, language) {
+    const primary = dictionaries[language] ?? {};
+    const fallback = dictionaries[DEFAULT_LANGUAGE] ?? {};
+    return (key, params = {}) =>
+      String(primary[key] ?? fallback[key] ?? key).replace(/\{(\w+)\}/g, (match, name) =>
+        name in params ? String(params[name]) : match,
+      );
+  }
+
+  /** Date and time formatters for a language. Times are wall-clock times stored as UTC. */
+  function createFormatters(language) {
+    const locale = LOCALES[language] ?? LOCALES[DEFAULT_LANGUAGE];
+    const dateTime = new Intl.DateTimeFormat(locale, {
+      timeZone: 'UTC',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const dayClock = new Intl.DateTimeFormat(locale, {
+      timeZone: 'UTC',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    return { dateTime: (ms) => dateTime.format(ms), dayClock: (ms) => dayClock.format(ms) };
+  }
+
+  const defaultDuration = ({ h, m }) => `${h}h ${m}m`;
+  /** @param {(parts: {h: number, m: string}) => string} format builds the text, e.g. from a translation */
+  function formatDuration(hours, format = defaultDuration) {
     const minutes = Math.round(hours * 60);
-    return `${Math.floor(minutes / 60)}h ${pad2(minutes % 60)}m`;
+    return format({ h: Math.floor(minutes / 60), m: pad2(minutes % 60) });
   }
   const formatClockHour = (hours) => `${pad2(Math.floor(hours) % 24)}:00`;
-  const compassLabel = (degrees) => `${COMPASS[Math.round(degrees / 22.5) % 16]} (${Math.round(degrees)}°)`;
+  const compassLabel = (degrees, t) =>
+    `${t('compass').split(',')[Math.round(degrees / 22.5) % 16]} (${Math.round(degrees)}°)`;
 
-  function skyLabel(sample, translate) {
-    if (sample.rainMm3h >= RAIN.dry) return translate('rain');
-    if (sample.cloudPct > 85) return translate('overcast');
-    if (sample.cloudPct > 50) return translate('cloudy');
-    return sample.cloudPct > 20 ? translate('partlyCloudy') : translate('clear');
+  function skyLabel(sample, t) {
+    if (sample.rainMm3h >= RAIN.dry) return t('sky.rain');
+    if (sample.cloudPct > 85) return t('sky.overcast');
+    if (sample.cloudPct > 50) return t('sky.mostlyCloudy');
+    return t(sample.cloudPct > 20 ? 'sky.partlyCloudy' : 'sky.clear');
   }
 
-  function rainLabel(mm3h, translate) {
-    if (mm3h < RAIN.dry) return translate('dry');
-    if (mm3h < RAIN.light) return translate('lightRain');
-    return mm3h < RAIN.moderate ? translate('moderateRain') : translate('heavyRain');
+  function rainLabel(mm3h, t) {
+    if (mm3h < RAIN.dry) return t('rain.dry');
+    if (mm3h < RAIN.light) return t('rain.light');
+    return t(mm3h < RAIN.moderate ? 'rain.moderate' : 'rain.heavy');
   }
 
   const mixColour = (from, to, amount) =>
@@ -640,6 +559,26 @@
     return mixColour(COLOURS.rainLight, COLOURS.rainHeavy, Math.min(1, mm3h / RAIN.fullScale));
   }
 
+  /** Colour scale spanning the route's temperatures, at least TEMPERATURE_MIN_SPAN wide and centred on them. */
+  function fitTemperatureScale(temps) {
+    if (temps.length === 0) return DEFAULT_TEMPERATURE_SCALE;
+    const min = Math.min(...temps);
+    const max = Math.max(...temps);
+    const span = Math.max(max - min, TEMPERATURE_MIN_SPAN);
+    const middle = (min + max) / 2;
+    return { low: middle - span / 2, high: middle + span / 2 };
+  }
+
+  function temperatureColour(tempC, scale = DEFAULT_TEMPERATURE_SCALE) {
+    if (tempC == null) return NO_DATA_COLOUR;
+    const position = clamp((tempC - scale.low) / (scale.high - scale.low), 0, 1);
+    const upper = TEMPERATURE_PALETTE.findIndex(([stop]) => position <= stop);
+    if (upper <= 0) return mixColour(TEMPERATURE_PALETTE[0][1], TEMPERATURE_PALETTE[0][1], 0);
+    const [lowerStop, lowerRgb] = TEMPERATURE_PALETTE[upper - 1];
+    const [upperStop, upperRgb] = TEMPERATURE_PALETTE[upper];
+    return mixColour(lowerRgb, upperRgb, (position - lowerStop) / (upperStop - lowerStop));
+  }
+
   // ------------------------------------------------------------------ view helpers
   function tag(name, attributes, inner = '') {
     const attrs = Object.entries(attributes)
@@ -648,6 +587,7 @@
     return `<${name}${attrs}>${inner}</${name}>`;
   }
   const fixed1 = (value) => value.toFixed(1);
+  const windfinderUrl = (lat, lon) => `https://www.windfinder.com/#9/${lat.toFixed(4)}/${lon.toFixed(4)}`;
 
   function createProjector(points) {
     const lats = points.map((p) => p[0]);
@@ -666,6 +606,39 @@
     const offsetX = (MAP.width - (maxLon - minLon) * lonScale * scale) / 2;
     const offsetY = (MAP.height - (maxLat - minLat) * scale) / 2;
     return (lat, lon) => [offsetX + (lon - minLon) * lonScale * scale, offsetY + (maxLat - lat) * scale];
+  }
+
+  /**
+   * SVG for the land and borders under the route: country fills, dashed province borders, country borders and
+   * province names. The projection is fixed, so this is built once.
+   * @param {{countries: {code: string, rings: number[][][]}[], provinces: {name: string, label: number[], rings: number[][][]}[]}} boundaries
+   *        rings are [lon, lat] pairs
+   * @param {(lat: number, lon: number) => number[]} project
+   */
+  function renderBoundaries(boundaries, project) {
+    const path = (rings) =>
+      rings
+        .map((ring) => {
+          const points = ring.map(([lon, lat]) => project(lat, lon).map(fixed1).join(' '));
+          return `M${points.join('L')}Z`;
+        })
+        .join('');
+    const fills = boundaries.countries.map((c) =>
+      tag('path', { class: `country-fill country-fill--${c.code.toLowerCase()}`, d: path(c.rings) }),
+    );
+    const provinces = boundaries.provinces.map((p) => tag('path', { class: 'province', d: path(p.rings) }));
+    const lines = boundaries.countries.map((c) => tag('path', { class: 'country-line', d: path(c.rings) }));
+    const labels = boundaries.provinces
+      .map((p) => {
+        const [x, y] = project(p.label[1], p.label[0]);
+        const half = p.name.length * LABEL_HALF_CHAR_PX;
+        const visible = x > -half && x < MAP.width + half && y > MAP.labelInset && y < MAP.height - MAP.labelInset;
+        // keep the whole name on the map even when its province is mostly off-screen
+        const labelX = clamp(x, MAP.labelInset + half, MAP.width - MAP.labelInset - half);
+        return visible ? tag('text', { class: 'province-label', x: fixed1(labelX), y: fixed1(y) }, p.name) : '';
+      })
+      .join('');
+    return fills.join('') + provinces.join('') + lines.join('') + labels;
   }
 
   const chartX = (km, totalKm) => CHART.padLeft + (km / totalKm) * (CHART.width - CHART.padLeft);
@@ -689,15 +662,15 @@
    * @param {{stopsKm: number[], totalKm: number}} context
    */
   function drawChart(svg, spec, context) {
-    const { height, baseline, pxPerUnit, limits, minBarPx } = spec;
+    const { height, baseline, pxPerUnit, limits, minBarPx, origin = 0 } = spec;
     const barWidth = (CHART.width - CHART.padLeft) / spec.bars.length;
     const grid = spec.ticks
       .map((value) => {
-        const y = fixed1(baseline - value * pxPerUnit);
+        const y = fixed1(baseline - (value - origin) * pxPerUnit);
         const label = (spec.signedTicks && value > 0 ? '+' : '') + value;
         return (
           tag('line', {
-            class: value ? 'gridline gridline--dashed' : 'gridline',
+            class: value === origin ? 'gridline' : 'gridline gridline--dashed',
             x1: CHART.padLeft,
             x2: CHART.width,
             y1: y,
@@ -712,7 +685,7 @@
     const bars = spec.bars
       .map((bar, i) => {
         if (!bar) return '';
-        const px = clamp(bar.value, limits[0], limits[1]) * pxPerUnit;
+        const px = (clamp(bar.value, limits[0], limits[1]) - origin) * pxPerUnit;
         if (Math.abs(px) <= minBarPx) return '';
         return tag('rect', {
           x: fixed1(CHART.padLeft + i * barWidth),
@@ -728,13 +701,29 @@
   }
 
   /** Chart definitions: one place for geometry and scales. */
-  function chartSpecs(samples, translate) {
+  function chartSpecs(samples, temperatureScale, t) {
     const limit = HEADWIND.chartLimitKmh;
     const peakPower = Math.max(...samples.map((s) => s.powerW));
     const powerTop = Math.max(150, peakPower);
     const powerStep = powerTop > 400 ? 100 : powerTop > 200 ? 50 : 25;
     const powerTicks = [];
     for (let value = 0; value <= powerTop; value += powerStep) powerTicks.push(value);
+
+    const temps = samples.filter((s) => s.weather).map((s) => s.weather.tempC);
+    const tempLow = temps.length
+      ? Math.min(0, Math.floor(Math.min(...temps) / TEMPERATURE_AXIS_STEP) * TEMPERATURE_AXIS_STEP)
+      : 0;
+    const tempHigh = temps.length
+      ? Math.max(
+          tempLow + 2 * TEMPERATURE_AXIS_STEP,
+          Math.ceil(Math.max(...temps) / TEMPERATURE_AXIS_STEP) * TEMPERATURE_AXIS_STEP,
+        )
+      : 20;
+    const tempTicks = [];
+    for (let value = tempLow; value <= tempHigh; value += TEMPERATURE_AXIS_STEP) tempTicks.push(value);
+    const tempCaption = temps.length
+      ? t('caption.temperature', { low: Math.round(Math.min(...temps)), high: Math.round(Math.max(...temps)) })
+      : t('caption.temperatureNone');
 
     return {
       wind: {
@@ -746,8 +735,8 @@
         ticks: [-20, -10, 0, 10, 20],
         signedTicks: true,
         captions: [
-          { text: translate('headwindChart'), y: 10, class: 'chart-label chart-label--head' },
-          { text: translate('tailwindChart'), y: 117, class: 'chart-label chart-label--tail' },
+          { text: t('caption.headwind'), y: 10, class: 'chart-label chart-label--head' },
+          { text: t('caption.tailwind'), y: 117, class: 'chart-label chart-label--tail' },
         ],
         bars: samples.map((s) => (s.weather ? { value: s.headwindKmh, colour: headwindColour(s.headwindKmh) } : null)),
       },
@@ -758,9 +747,22 @@
         limits: [0, RAIN.fullScale],
         minBarPx: 0.5,
         ticks: [0, 2, 4, 6],
-        captions: [{ text: translate('rainChart'), y: 10, class: 'chart-label' }],
+        captions: [{ text: t('caption.rain'), y: 10, class: 'chart-label' }],
         bars: samples.map((s) =>
           s.weather ? { value: s.weather.rainMm3h, colour: rainColour(s.weather.rainMm3h) } : null,
+        ),
+      },
+      temperature: {
+        height: 100,
+        baseline: 90,
+        pxPerUnit: 76 / (tempHigh - tempLow),
+        origin: tempLow,
+        limits: [tempLow, tempHigh],
+        minBarPx: 0.5,
+        ticks: tempTicks,
+        captions: [{ text: tempCaption, y: 10, class: 'chart-label' }],
+        bars: samples.map((s) =>
+          s.weather ? { value: s.weather.tempC, colour: temperatureColour(s.weather.tempC, temperatureScale) } : null,
         ),
       },
       power: {
@@ -770,7 +772,7 @@
         limits: [0, powerTop],
         minBarPx: 0.5,
         ticks: powerTicks,
-        captions: [{ text: translate('powerChart', { peak: Math.round(peakPower) }), y: 10, class: 'chart-label' }],
+        captions: [{ text: t('caption.power', { peak: Math.round(peakPower) }), y: 10, class: 'chart-label' }],
         bars: samples.map((s) => ({ value: s.powerW, colour: POWER_COLOUR })),
       },
     };
@@ -784,8 +786,11 @@
       (best, s) => (s.weather.rainMm3h > (best?.weather.rainMm3h ?? 0) ? s : best),
       null,
     );
+    const temps = withWeather.map((s) => s.weather.tempC);
     return {
       measured: withWeather.length,
+      tempMin: Math.min(...temps),
+      tempMax: Math.max(...temps),
       missingShare: 1 - withWeather.length / samples.length,
       meanHeadwindKmh: withWeather.reduce((sum, s) => sum + s.headwindKmh, 0) / (withWeather.length || 1),
       wetShare: wet.length / (withWeather.length || 1),
@@ -793,18 +798,27 @@
     };
   }
 
-  const swatch = (modifier) => tag('i', { class: `swatch ${modifier}`.trim() });
+  const swatch = (modifier, colour) =>
+    tag('i', { class: `swatch ${modifier}`.trim(), ...(colour ? { style: `background:${colour}` } : {}) });
+  /** Legend entries for the temperature colouring: five labelled steps of the fitted scale. */
+  function temperatureLegend(scale) {
+    return TEMPERATURE_PALETTE.map(([position]) => {
+      const tempC = scale.low + position * (scale.high - scale.low);
+      return ['', `${Math.round(tempC)} °C`, temperatureColour(tempC, scale)];
+    });
+  }
+  /** Legend entries per map colouring: [swatch class, label, optional colour]. */
   const LEGENDS = {
     wind: [
-      ['swatch--head', 'headwind'],
-      ['swatch--tail', 'tailwind'],
-      ['', 'crosswindNoData'],
+      ['swatch--head', 'legend.headwind'],
+      ['swatch--tail', 'legend.tailwind'],
+      ['', 'legend.crosswind'],
     ],
     rain: [
-      ['', 'dryNoData'],
-      ['swatch--light', 'light'],
-      ['swatch--moderate', 'moderate'],
-      ['swatch--heavy', 'heavy'],
+      ['', 'legend.dry'],
+      ['swatch--light', 'legend.light'],
+      ['swatch--moderate', 'legend.moderate'],
+      ['swatch--heavy', 'legend.heavy'],
     ],
   };
 
@@ -816,138 +830,88 @@
   function createApp(dom, data) {
     const route = createRoute(data.route);
     const project = createProjector(route.points);
+    const boundaryLayer = renderBoundaries(data.boundaries, project);
     const finish = data.stations.stations.at(-1);
     const stations = data.stations.stations.map((s) => ({ ...s, km: s.km ?? route.totalKm }));
-    let savedLanguage;
-    try {
-      savedLanguage = localStorage.getItem('ride-cast-language');
-    } catch {
-      savedLanguage = null;
-    }
+    let t = createTranslator(data.translations, data.language);
+    let fmt = createFormatters(data.language);
     const state = {
-      weather: null,
+      language: data.language,
+      status: { loading: null, notes: [], spans: [] },
+      weather: createWeather(new Map()),
       mapMode: 'wind',
       paceMode: 'speed',
       ride: null,
       samples: [],
       plan: null,
-      language: savedLanguage === 'nl' ? 'nl' : 'en',
-      weatherStatus: 'bundledForecast',
-      weatherStatusValues: {},
+      temperatureScale: DEFAULT_TEMPERATURE_SCALE,
+      source: 'knmi',
+      loadId: 0,
+      reloadTimer: null,
     };
-    let dateTimeFormat;
-    let dayClockFormat;
-    const translate = (key, values = {}) =>
-      (STRINGS[state.language][key] || STRINGS.en[key] || key).replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '');
-    const updateDateFormats = () => {
-      const locale = state.language === 'nl' ? 'nl-NL' : 'en-GB';
-      dateTimeFormat = new Intl.DateTimeFormat(locale, {
-        timeZone: 'UTC',
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      dayClockFormat = new Intl.DateTimeFormat(locale, {
-        timeZone: 'UTC',
-        weekday: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    };
-    const applyStaticTranslations = () => {
-      document.documentElement.lang = state.language;
-      for (const element of document.querySelectorAll('[data-i18n]')) {
-        element.textContent = translate(element.dataset.i18n);
-      }
-      for (const element of document.querySelectorAll('[data-i18n-html]')) {
-        element.innerHTML = translate(element.dataset.i18nHtml);
-      }
-      for (const element of document.querySelectorAll('[data-i18n-prefix]')) {
-        element.firstChild.nodeValue = `${translate(element.dataset.i18nPrefix)} `;
-      }
-      for (const element of document.querySelectorAll('[data-i18n-aria]')) {
-        element.setAttribute('aria-label', translate(element.dataset.i18nAria));
-      }
-      document.title = translate('pageTitle');
-      const finishPreset = dom.presets.lastElementChild;
-      if (finishPreset) finishPreset.textContent = translate('preset24');
-      for (const button of dom.languageControl.querySelectorAll('[data-language]')) {
-        const selected = button.dataset.language === state.language;
-        button.classList.toggle('is-active', selected);
-        button.setAttribute('aria-pressed', String(selected));
-      }
-    };
-    const setWeatherStatus = (key, values = {}) => {
-      state.weatherStatus = key;
-      state.weatherStatusValues = values;
-      dom.weatherStatus.textContent = translate(key, values);
-    };
-    updateDateFormats();
-    const forecastKms = [...new Set([0, 171, Math.round(route.totalKm)])];
     const chartContext = () => ({ stopsKm: state.plan.stopsKm, totalKm: route.totalKm });
 
-    function renderCoverage() {
+    /** Shows which source is loaded and what it covers, in the current language. */
+    function renderStatus() {
+      const { loading, notes, spans } = state.status;
+      if (loading) {
+        dom.forecastStatus.textContent = t('status.loading', { name: loading });
+        return;
+      }
+      const range = spans.length
+        ? t('status.covers', {
+            from: fmt.dateTime(Math.min(...spans.map((s) => s.from))),
+            to: fmt.dateTime(Math.max(...spans.map((s) => s.to))),
+          })
+        : t('status.noRows');
+      dom.forecastStatus.textContent = [...notes.map(({ key, params }) => t(key, params)), range].join(' ');
       dom.coverage.textContent =
-        state.weather
-          .coverage()
-          .map((c) =>
-            translate('coverage', { km: c.km, from: dateTimeFormat.format(c.from), to: dateTimeFormat.format(c.to) }),
-          )
-          .join('; ') || translate('noValidRows');
+        spans
+          .map((s) => t('coverage.item', { km: s.km, from: fmt.dateTime(s.from), to: fmt.dateTime(s.to) }))
+          .join('; ') || t('coverage.none');
     }
 
-    function updateForecast(byKm) {
+    function setForecast(byKm, notes) {
       state.weather = createWeather(byKm);
-      renderCoverage();
+      state.status = { loading: null, notes, spans: state.weather.coverage() };
+      renderStatus();
     }
 
-    function loadForecast() {
-      updateForecast(parseForecast(dom.forecastText.value));
-    }
-
-    async function loadLiveForecast() {
-      if (typeof fetch !== 'function') {
-        setWeatherStatus('liveUnavailable');
-        return;
-      }
-      setWeatherStatus('loadingLive');
-      const results = await Promise.allSettled(
-        forecastKms.map(async (km) => {
-          const { lat, lon } = route.pointAt(km);
-          const query = new URLSearchParams({ lat: lat.toFixed(4), lon: lon.toFixed(4) });
-          const response = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/compact?${query}`);
-          if (!response.ok) throw new Error(`Forecast request failed (${response.status})`);
-          return { km, samples: parseYrForecast(await response.json()) };
-        }),
-      );
-      const byKm = parseForecast(dom.forecastText.value);
-      let livePoints = 0;
-      for (const result of results) {
-        if (result.status === 'fulfilled' && result.value.samples.length) {
-          byKm.set(result.value.km, result.value.samples);
-          livePoints += 1;
+    /** Loads the selected source, falling back to the saved Yr forecast if a live one fails. Stale answers are ignored. */
+    async function loadForecast() {
+      const loadId = (state.loadId += 1);
+      const source = dom.forecastSource.value;
+      state.source = source;
+      let byKm;
+      let notes = [{ key: `source.${source}` }];
+      if (source in LIVE_SOURCES) {
+        const { name } = LIVE_SOURCES[source];
+        state.status = { loading: name, notes: [], spans: [] };
+        renderStatus();
+        try {
+          byKm = await fetchOpenMeteoForecast(route, dom.startDate.value || DEFAULT_START_DATE, source);
+        } catch (error) {
+          byKm = parseForecast(data.forecast);
+          notes = [{ key: 'source.unavailable', params: { name, message: error.message } }, { key: 'source.yr' }];
         }
+      } else {
+        byKm = parseForecast(source === 'yr' ? data.forecast : dom.forecastText.value);
       }
-      if (!livePoints) {
-        setWeatherStatus('liveUnavailable');
-        return;
-      }
-      updateForecast(byKm);
-      setWeatherStatus(
-        livePoints === forecastKms.length ? 'liveFetched' : 'livePartial',
-        livePoints === forecastKms.length
-          ? { date: dateTimeFormat.format(Date.now()) }
-          : { loaded: livePoints, total: forecastKms.length },
-      );
+      if (loadId !== state.loadId) return;
+      if (source !== 'custom') dom.forecastText.value = toForecastCsv(byKm);
+      setForecast(byKm, notes);
       render();
+    }
+
+    function scheduleReload() {
+      clearTimeout(state.reloadTimer);
+      state.reloadTimer = setTimeout(loadForecast, RELOAD_DELAY_MS);
     }
 
     const number = (input, fallback) => Number(input.value) || fallback;
 
     function readPlan() {
-      const [year, month, day] = (dom.startDate.value || '2026-10-10').split('-').map(Number);
+      const [year, month, day] = (dom.startDate.value || DEFAULT_START_DATE).split('-').map(Number);
       const [hour, minute] = (dom.startTime.value || '12:00').split(':').map(Number);
       return {
         mode: state.paceMode,
@@ -995,13 +959,18 @@
         const p = route.pointAt(km);
         return project(p.lat, p.lon);
       };
-      const colourOf = (s) =>
-        state.mapMode === 'rain' ? rainColour(s.weather?.rainMm3h) : headwindColour(s.headwindKmh);
+      const colourOf = (s) => {
+        if (state.mapMode === 'rain') return rainColour(s.weather?.rainMm3h);
+        if (state.mapMode === 'temperature') return temperatureColour(s.weather?.tempC, state.temperatureScale);
+        return headwindColour(s.headwindKmh);
+      };
       const coords = ([x, y]) => `${fixed1(x)},${fixed1(y)}`;
-      let svg = tag('polyline', {
-        class: 'route-base',
-        points: route.points.map((p) => coords(project(p[0], p[1]))).join(' '),
-      });
+      let svg =
+        boundaryLayer +
+        tag('polyline', {
+          class: 'route-base',
+          points: route.points.map((p) => coords(project(p[0], p[1]))).join(' '),
+        });
       for (let i = 0; i < samples.length - 1; i += 1) {
         const [x1, y1] = at(samples[i].km);
         const [x2, y2] = at(samples[i + 1].km);
@@ -1029,12 +998,12 @@
       svg += tag(
         'text',
         { class: 'map-label map-label--major', 'text-anchor': 'end', x: startX - 10, y: startY - 8 },
-        `${data.stations.start} (${translate('start')})`,
+        t('map.start', { name: data.stations.start }),
       );
       svg += tag(
         'text',
         { class: 'map-label map-label--major', x: endX + 10, y: endY + 14 },
-        `${finish.name} (${translate('finish')})`,
+        t('map.finish', { name: finish.name }),
       );
       for (const km of plan.stopsKm) {
         const [x, y] = at(km);
@@ -1045,14 +1014,19 @@
         svg += tag('text', { class: 'map-label', x: x + 9, y: y - 8 }, station.name);
       }
       dom.map.innerHTML = svg + tag('g', { id: 'map-marker' });
-      dom.legend.innerHTML =
-        `<span>${swatch('swatch--stop')}${translate('stop')}</span>` +
-        LEGENDS[state.mapMode].map(([modifier, key]) => `<span>${swatch(modifier)}${translate(key)}</span>`).join('');
-    }
-
-    function formatRideDuration(hours) {
-      const minutes = Math.round(hours * 60);
-      return `${Math.floor(minutes / 60)}${translate('hoursShort')} ${pad2(minutes % 60)}${translate('minutesShort')}`;
+      dom.map.setAttribute('aria-label', t('map.aria', { mode: t(`mode.name.${state.mapMode}`) }));
+      const legendItems =
+        state.mapMode === 'temperature'
+          ? temperatureLegend(state.temperatureScale)
+          : LEGENDS[state.mapMode].map(([modifier, key]) => [modifier, t(key)]);
+      const fixedItems = [
+        ['swatch--stop', t('legend.stop')],
+        ['swatch--province', t('legend.province')],
+        ['swatch--country', t('legend.country')],
+      ];
+      dom.legend.innerHTML = [...fixedItems, ...legendItems]
+        .map(([modifier, label, colour]) => `<span>${swatch(modifier, colour)}${label}</span>`)
+        .join('');
     }
 
     function renderSummary() {
@@ -1061,20 +1035,39 @@
       const finishTime = ride.times.at(-1);
       const speedKmh = route.totalKm / ride.ridingHours;
       const strong = (text) => tag('b', { class: 'strong' }, text);
-      let html =
-        `${strong(`${route.totalKm.toFixed(0)} km`)} · ${translate('riding')} ${formatRideDuration(ride.ridingHours)} + ${plan.stopsKm.length} ${translate('stops')} × ${plan.stopMinutes} ${translate('minutesShort')} · ` +
-        `${translate('finishLabel')} ${strong(dateTimeFormat.format(finishTime))} (${formatRideDuration((finishTime - plan.startTime) / MS_PER_HOUR)} ${translate('elapsed')})<br>` +
-        `${translate('averageSpeedShort')} ${strong(`${fixed1(speedKmh)} km/h`)} · ${translate('averagePowerShort')} ${strong(`${Math.round(ride.averagePowerW)} W`)} ` +
-        `(${fixed1(ride.averagePowerW / plan.riderKg)} W/kg)`;
+      const duration = (hours) => formatDuration(hours, (parts) => t('duration', parts));
+      const lines = [
+        t('summary.trip', {
+          km: strong(`${route.totalKm.toFixed(0)} km`),
+          riding: duration(ride.ridingHours),
+          stops: plan.stopsKm.length,
+          minutes: plan.stopMinutes,
+          finish: strong(fmt.dateTime(finishTime)),
+          elapsed: duration((finishTime - plan.startTime) / MS_PER_HOUR),
+        }),
+        t('summary.averages', {
+          speed: strong(`${fixed1(speedKmh)} ${t('unit.kmh')}`),
+          power: strong(`${Math.round(ride.averagePowerW)} W`),
+          wkg: fixed1(ride.averagePowerW / plan.riderKg),
+        }),
+      ];
       if (stats.measured) {
         const sign = stats.meanHeadwindKmh >= 0 ? '+' : '';
-        html += `<br>${translate('averageHeadwind')} ${sign}${fixed1(stats.meanHeadwindKmh)} km/h ${translate('negativeTailwind')}`;
-        html += stats.wetShare
-          ? `<br>${translate('rainOnAbout')} ${Math.round(stats.wetShare * 100)}${translate('routeHeaviest', { rain: fixed1(stats.heaviest.weather.rainMm3h / 3), km: stats.heaviest.km.toFixed(0) })}`
-          : `<br>${translate('dryWholeRoute')}`;
+        lines.push(
+          t('summary.headwind', { value: `${sign}${fixed1(stats.meanHeadwindKmh)}` }),
+          t('summary.temperature', { low: Math.round(stats.tempMin), high: Math.round(stats.tempMax) }),
+          stats.wetShare
+            ? t('summary.rain', {
+                share: Math.round(stats.wetShare * 100),
+                rate: fixed1(stats.heaviest.weather.rainMm3h / 3),
+                km: stats.heaviest.km.toFixed(0),
+              })
+            : t('summary.dry'),
+        );
       }
+      let html = lines.join('<br>');
       if (stats.missingShare > 0) {
-        html += `<div class="warn">${translate('missingForecast', { share: Math.round(stats.missingShare * 100) })}</div>`;
+        html += `<div class="warn">${t('summary.missing', { share: Math.round(stats.missingShare * 100) })}</div>`;
       }
       dom.summary.innerHTML = html;
       if (state.paceMode === 'speed') dom.power.value = Math.round(ride.averagePowerW);
@@ -1084,62 +1077,64 @@
     function renderStations() {
       const { plan, ride } = state;
       const dayStart = Math.floor(plan.startTime / MS_PER_DAY) * MS_PER_DAY;
-      const label = {
-        early: (minutes) => translate('earlyBy', { minutes }),
-        late: (minutes) => translate('lateBy', { minutes }),
-        ok: () => translate('inWindow'),
-      };
       const rows = stations
         .map((station) => {
           const arrival = ride.arrivalAt(station.km);
           const status = stationStatus(arrival, dayStart, station);
-          const name = station === stations.at(-1) ? `${station.name} (${translate('finish')})` : station.name;
+          const name = station === stations.at(-1) ? t('map.finish', { name: station.name }) : station.name;
           return (
             `<tr><td>${name}</td><td>${Math.round(station.km)}</td><td>${formatClockHour(station.opens)} / ${formatClockHour(station.closes)}</td>` +
-            `<td>${dayClockFormat.format(arrival)}</td><td class="status status--${status.state}">${label[status.state](status.minutes)}</td></tr>`
+            `<td>${fmt.dayClock(arrival)}</td><td class="status status--${status.state}">${t(`stationStatus.${status.state}`, { m: status.minutes })}</td></tr>`
           );
         })
         .join('');
-      dom.stations.innerHTML =
-        `<table><tr><th>${translate('station')}</th><th>km</th><th>${translate('times')}</th><th>${translate('youArrive')}</th><th>${translate('status')}</th></tr>${rows}</table>` +
-        `<p class="note">${translate('stationNote')}</p>`;
+      const header = ['station', 'km', 'times', 'arrive', 'status']
+        .map((c) => `<th>${t(`stations.col.${c}`)}</th>`)
+        .join('');
+      dom.stations.innerHTML = `<table><tr>${header}</tr>${rows}</table><p class="note">${t('stations.note')}</p>`;
     }
 
     function renderReadout(point) {
       const sample = point.weather;
       if (!sample) {
         dom.readout.innerHTML =
-          `<div class="big">${translate('noForecastAt', { date: dateTimeFormat.format(point.time) })}</div>` +
-          `<p class="warn">${translate('noForecastHelp')}</p>`;
+          `<div class="big">${t('readout.noForecast', { time: fmt.dateTime(point.time) })}</div>` +
+          `<p class="warn">${t('readout.noForecastHint')}</p>`;
         return;
       }
       const head = point.headwindKmh;
       const tone = head > HEADWIND.neutralKmh ? 'big--head' : head < -HEADWIND.neutralKmh ? 'big--tail' : '';
       const headline =
         Math.abs(head) < HEADWIND.neutralKmh
-          ? translate('mostlyCrosswind')
-          : `${Math.abs(head).toFixed(0)} km/h ${translate(head > 0 ? 'headwind' : 'tailwind')}`;
-      const cell = (name, value) => `<div><span>${name}</span>${value}</div>`;
+          ? t('readout.crosswind')
+          : t(head > 0 ? 'readout.headwind' : 'readout.tailwind', { n: Math.abs(head).toFixed(0) });
+      const kmh = t('unit.kmh');
+      const cell = (key, value) => `<div><span>${t(key)}</span>${value}</div>`;
       const gust =
-        sample.gustKts > sample.windKts + 0.05 ? `${(sample.gustKts * KNOTS_TO_KMH).toFixed(0)} km/h` : 'n/a';
+        sample.gustKts > sample.windKts + 0.05 ? `${(sample.gustKts * KNOTS_TO_KMH).toFixed(0)} ${kmh}` : t('cell.na');
+      const context = t('readout.context', {
+        dir: compassLabel(point.bearing, t),
+        from: compassLabel(sample.dir, t),
+        sky: skyLabel(sample, t),
+      });
       dom.readout.innerHTML =
         `<div class="big ${tone}">${headline}</div>` +
-        `<div class="muted">${translate('riding')} ${compassLabel(point.bearing)} · ${translate('windFrom')} ${compassLabel(sample.dir)} · ${skyLabel(sample, translate)}</div>` +
+        `<div class="muted">${context}</div>` +
         '<div class="grid">' +
-        cell(translate('speed'), `<b>${fixed1(point.speedKmh)} km/h</b>`) +
-        cell(translate('power'), `<b>${Math.round(point.powerW)} W</b>`) +
+        cell('cell.speed', `<b>${fixed1(point.speedKmh)} ${kmh}</b>`) +
+        cell('cell.power', `<b>${Math.round(point.powerW)} W</b>`) +
         cell(
-          translate('wind'),
-          `<b>${point.windKmh.toFixed(0)} km/h</b> <small>(${sample.windKts.toFixed(0)} kts)</small>`,
+          'cell.wind',
+          `<b>${point.windKmh.toFixed(0)} ${kmh}</b> <small>(${sample.windKts.toFixed(0)} ${t('unit.kts')})</small>`,
         ) +
-        cell(translate('gusts'), `<b>${gust}</b>`) +
-        cell(translate('crosswind'), `<b>${Math.abs(point.crosswindKmh).toFixed(0)} km/h</b>`) +
-        cell(translate('temperature'), `<b>${sample.tempC.toFixed(0)} °C</b>`) +
+        cell('cell.gusts', `<b>${gust}</b>`) +
+        cell('cell.crosswind', `<b>${Math.abs(point.crosswindKmh).toFixed(0)} ${kmh}</b>`) +
+        cell('cell.temperature', `<b>${sample.tempC.toFixed(0)} °C</b>`) +
         cell(
-          translate('rain'),
-          `<b>${rainLabel(sample.rainMm3h, translate)}</b> <small>(${fixed1(sample.rainMm3h / 3)} mm/h)</small>`,
+          'cell.rain',
+          `<b>${rainLabel(sample.rainMm3h, t)}</b> <small>(${fixed1(sample.rainMm3h / 3)} ${t('unit.mmh')})</small>`,
         ) +
-        cell(translate('cloud'), `<b>${sample.cloudPct.toFixed(0)}%</b>`) +
+        cell('cell.cloud', `<b>${sample.cloudPct.toFixed(0)}%</b>`) +
         '</div>';
     }
 
@@ -1148,7 +1143,7 @@
       const km = Number(dom.position.value);
       const point = describePoint(route, state.weather, state.ride, km);
       const [x, y] = project(route.pointAt(km).lat, route.pointAt(km).lon);
-      dom.positionLabel.textContent = `km ${fixed1(km)} · ${dateTimeFormat.format(point.time)}`;
+      dom.positionLabel.textContent = `km ${fixed1(km)} · ${fmt.dateTime(point.time)}`;
       const arrow = point.weather
         ? tag(
             'g',
@@ -1167,8 +1162,8 @@
       }
       renderReadout(point);
       const { lat, lon } = route.pointAt(km);
-      dom.windfinderLink.href = `https://www.windfinder.com/#9/${lat.toFixed(4)}/${lon.toFixed(4)}`;
-      dom.windfinderLink.textContent = translate('windfinderMap', { km: km.toFixed(0) });
+      dom.windfinderLink.href = windfinderUrl(lat, lon);
+      dom.windfinderLink.textContent = t('windfinder.link', { km: km.toFixed(0) });
     }
 
     function render() {
@@ -1178,22 +1173,18 @@
       state.samples = Array.from({ length: count + 1 }, (_, i) =>
         describePoint(route, state.weather, state.ride, Math.min(route.totalKm, i * SAMPLE_STEP_KM)),
       );
+      state.temperatureScale = fitTemperatureScale(state.samples.filter((s) => s.weather).map((s) => s.weather.tempC));
       renderMap();
-      const specs = chartSpecs(state.samples, translate);
+      const specs = chartSpecs(state.samples, state.temperatureScale, t);
       for (const [name, svg] of Object.entries(dom.charts)) drawChart(svg, specs[name], chartContext());
       renderSummary();
       renderStations();
       updateCursor();
     }
 
-    // --- events
-    function init() {
-      applyStaticTranslations();
-      setWeatherStatus(state.weatherStatus);
-      dom.forecastText.value = data.forecast;
-      dom.position.max = route.totalKm;
-      loadForecast();
-
+    // --- language
+    function buildPresets() {
+      dom.presets.replaceChildren();
       const addPreset = (label, onClick) => {
         const button = document.createElement('button');
         button.textContent = label;
@@ -1206,14 +1197,55 @@
         dom.presets.appendChild(button);
       };
       for (const kmh of SPEED_PRESETS_KMH) {
-        addPreset(`${kmh} km/h`, () => {
+        addPreset(t('preset.kmh', { n: kmh }), () => {
           dom.speed.value = kmh;
         });
       }
-      addPreset(translate('preset24'), () => {
+      addPreset(t('preset.finish24'), () => {
         const { stopsKm, stopMinutes } = readPlan();
         dom.speed.value = (route.totalKm / Math.max(1, TARGET_HOURS - (stopsKm.length * stopMinutes) / 60)).toFixed(2);
       });
+      updatePresets();
+    }
+
+    /** Writes the translated text of everything marked with data-i18n, data-i18n-html or data-i18n-aria. */
+    function applyStaticTranslations() {
+      document.documentElement.lang = state.language;
+      document.title = t('page.title');
+      for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+      for (const node of document.querySelectorAll('[data-i18n-html]')) node.innerHTML = t(node.dataset.i18nHtml);
+      for (const node of document.querySelectorAll('[data-i18n-aria]')) {
+        node.setAttribute('aria-label', t(node.dataset.i18nAria));
+      }
+      for (const button of dom.langSwitch.querySelectorAll('button')) {
+        const active = button.dataset.lang === state.language;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', String(active));
+      }
+    }
+
+    function setLanguage(language, { persist = true } = {}) {
+      state.language = language;
+      t = createTranslator(data.translations, language);
+      fmt = createFormatters(language);
+      applyStaticTranslations();
+      buildPresets();
+      if (state.plan) {
+        renderStatus();
+        render();
+      }
+      if (persist) data.onLanguageChange?.(language);
+    }
+
+    // --- events
+    function init() {
+      dom.position.max = route.totalKm;
+      dom.windfinderPoints.innerHTML = forecastPointKms(route.totalKm)
+        .map((km) => {
+          const { lat, lon } = route.pointAt(km);
+          return `<a href="${windfinderUrl(lat, lon)}" target="_blank" rel="noopener">km ${Math.round(km)}</a>`;
+        })
+        .join(' · ');
 
       const inputs = [
         dom.speed,
@@ -1234,8 +1266,10 @@
           if (input === dom.power) setPace('power');
           updatePresets();
           render();
+          if (input === dom.startDate && state.source in LIVE_SOURCES) scheduleReload();
         });
       }
+      dom.forecastSource.addEventListener('change', loadForecast);
       dom.paceMode.addEventListener('click', (event) => {
         if (event.target.dataset.pace) {
           setPace(event.target.dataset.pace);
@@ -1250,24 +1284,13 @@
         updateCursor();
       });
       dom.position.addEventListener('input', updateCursor);
-      dom.languageControl.addEventListener('click', (event) => {
-        const button = event.target.closest('[data-language]');
-        if (!button) return;
-        state.language = button.dataset.language === 'nl' ? 'nl' : 'en';
-        try {
-          localStorage.setItem('ride-cast-language', state.language);
-        } catch {
-          state.language = button.dataset.language === 'nl' ? 'nl' : 'en';
-        }
-        updateDateFormats();
-        applyStaticTranslations();
-        renderCoverage();
-        setWeatherStatus(state.weatherStatus, state.weatherStatusValues);
-        render();
+      dom.langSwitch.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-lang]');
+        if (button) setLanguage(button.dataset.lang);
       });
       dom.applyForecast.addEventListener('click', () => {
+        dom.forecastSource.value = 'custom';
         loadForecast();
-        render();
       });
       for (const svg of Object.values(dom.charts)) {
         svg.addEventListener('click', (event) => {
@@ -1277,10 +1300,11 @@
           updateCursor();
         });
       }
+      setLanguage(state.language, { persist: false });
       setPace('speed');
       updatePresets();
       render();
-      void loadLiveForecast();
+      loadForecast();
     }
 
     return { init };
@@ -1290,7 +1314,6 @@
     const byId = (id) => document.getElementById(id);
     return {
       map: byId('map'),
-      languageControl: byId('language-control'),
       legend: byId('legend'),
       mapMode: byId('map-mode'),
       position: byId('position'),
@@ -1309,23 +1332,53 @@
       crr: byId('crr'),
       windShare: byId('wind-share'),
       summary: byId('summary'),
-      weatherStatus: byId('weather-status'),
       readout: byId('readout'),
       stations: byId('stations'),
       forecastText: byId('forecast-text'),
+      langSwitch: document.querySelector('.lang-switch'),
+      forecastSource: byId('forecast-source'),
+      forecastStatus: byId('forecast-status'),
       coverage: byId('coverage'),
       applyForecast: byId('apply-forecast'),
       windfinderLink: byId('windfinder-link'),
-      charts: { wind: byId('wind-chart'), rain: byId('rain-chart'), power: byId('power-chart') },
+      windfinderPoints: byId('windfinder-points'),
+      charts: {
+        wind: byId('wind-chart'),
+        rain: byId('rain-chart'),
+        temperature: byId('temperature-chart'),
+        power: byId('power-chart'),
+      },
     };
+  }
+
+  function readStoredLanguage() {
+    try {
+      return localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    } catch {
+      return null; // storage is blocked (private mode, some file:// setups)
+    }
+  }
+
+  function storeLanguage(language) {
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch {
+      // not persisted; the choice still applies for this visit
+    }
   }
 
   function start() {
     const text = (id) => document.getElementById(id).textContent;
+    const translations = JSON.parse(text('translations-data'));
+    const browserLanguages = navigator.languages?.length ? navigator.languages : [navigator.language ?? ''];
     createApp(queryDom(), {
       route: JSON.parse(text('route-data')),
       stations: JSON.parse(text('stations-data')),
+      boundaries: JSON.parse(text('boundaries-data')),
       forecast: text('forecast-data').trim(),
+      translations,
+      language: detectLanguage(readStoredLanguage(), browserLanguages, Object.keys(translations)),
+      onLanguageChange: storeLanguage,
     }).init();
   }
 
@@ -1333,7 +1386,6 @@
   const model = {
     createRoute,
     parseForecast,
-    parseYrForecast,
     createWeather,
     simulate,
     describePoint,
@@ -1342,6 +1394,15 @@
     stationStatus,
     formatDuration,
     blendSamples,
+    parseOpenMeteo,
+    buildOpenMeteoUrl,
+    forecastPointKms,
+    fetchOpenMeteoForecast,
+    toForecastCsv,
+    temperatureColour,
+    fitTemperatureScale,
+    createTranslator,
+    detectLanguage,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = model;
   else start();
