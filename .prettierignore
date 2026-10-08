@@ -1,0 +1,5 @@
+dist/
+node_modules/
+data/route.gpx
+data/boundaries.json
+package-lock.json
